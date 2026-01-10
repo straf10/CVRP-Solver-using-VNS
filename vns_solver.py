@@ -125,31 +125,37 @@ class VNSSolver:
 
     def _local_search(self, solution):
         """
-        VND Strategy:
+        VND Strategy Enhanced:
         1. Intra-2Opt (Fast cleanup)
-        2. Inter-2Opt* (Structural change - THE GAP CLOSER)
-        3. Relocate (Load balancing)
-        4. Swap (Exchange)
+        2. Inter-2Opt* (Structural change - Big moves)
+        3. Relocate Chain (Precision structural change) <--- NEW
+        4. Relocate (Load balancing single nodes)
+        5. Swap (Exchange)
         """
         improved = True
         while improved:
             improved = False
 
-            # 1. Clean individual routes first
+            # 1. Clean individual routes first (Intra)
             while self._2opt_intra_fast(solution): improved = True
 
-            # 2. Try to untangle routes (Inter-Route 2-Opt / Cross)
-            # Αυτό είναι το πιο σημαντικό για το Gap < 2%
+            # 2. Inter-Route 2-Opt* (The Heavy Lifter)
             if self._2opt_star_fast(solution):
                 improved = True
                 continue
 
-                # 3. Move nodes to balance loads
+                # 3. NEW: Relocate Chains (Move sequences of 2 nodes)
+            # Βοηθάει να μεταφερθούν "συστάδες" πελατών
+            if self._relocate_chain_fast(solution, chain_len=2):
+                improved = True
+                continue
+
+            # 4. Standard Relocate (Single node)
             if self._relocate_fast(solution):
                 improved = True
                 continue
 
-            # 4. Swap nodes
+            # 5. Swap nodes
             if self._swap_fast(solution):
                 improved = True
                 continue
@@ -355,4 +361,86 @@ class VNSSolver:
                             r1[i], r2[j] = v, u
                             solution.cost += delta
                             return True
+        return False
+
+    def _relocate_chain_fast(self, solution, chain_len=2):
+        """
+        Inter-route Relocate Chain.
+        Μετακινεί μια αλληλουχία 'chain_len' κόμβων από το Source στο Destination.
+        """
+        routes = solution.routes
+        dist = self.instance.distance
+        depot = self.instance.depot
+        demands = self.instance.demands
+        capacity = self.instance.capacity
+        loads = [sum(demands[n] for n in r) for r in routes]
+
+        for s_idx, src_route in enumerate(routes):
+            if len(src_route) < chain_len: continue
+
+            # Τρέχουμε το παράθυρο της αλυσίδας
+            # i είναι η αρχή της αλυσίδας
+            for i in range(len(src_route) - chain_len + 1):
+                # Η αλυσίδα είναι: src_route[i ... i + chain_len - 1]
+                chain = src_route[i: i + chain_len]
+                chain_demand = sum(demands[n] for n in chain)
+
+                # Κόμβοι γύρω από την αλυσίδα στο Source
+                # prev -> [Start ... End] -> next
+                start_node = chain[0]
+                end_node = chain[-1]
+
+                prev_n = src_route[i - 1] if i > 0 else depot
+                next_n = src_route[i + chain_len] if i + chain_len < len(src_route) else depot
+
+                # Κόστος που φεύγει (αφαιρούμε τις ακμές σύνδεσης της αλυσίδας)
+                # (Το εσωτερικό κόστος της αλυσίδας μένει ίδιο, άρα δεν το βάζουμε στο delta)
+                cost_removed = dist(prev_n, start_node) + dist(end_node, next_n)
+                # Κόστος που "κλείνει" το κενό
+                cost_close_gap = dist(prev_n, next_n)
+
+                loss_source = cost_close_gap - cost_removed
+
+                for d_idx, dst_route in enumerate(routes):
+                    if s_idx == d_idx: continue
+                    if loads[d_idx] + chain_demand > capacity: continue
+
+                    # Ψάχνουμε θέση εισαγωγής στο Destination
+                    best_pos_delta = float('inf')
+                    best_k = -1
+
+                    for k in range(len(dst_route) + 1):
+                        p = dst_route[k - 1] if k > 0 else depot
+                        n = dst_route[k] if k < len(dst_route) else depot
+
+                        # Κόστος ένταξης της αλυσίδας ανάμεσα σε p και n
+                        # p -> [Start ... End] -> n
+                        cost_added = dist(p, start_node) + dist(end_node, n)
+                        cost_break_gap = dist(p, n)
+
+                        gain_dest = cost_added - cost_break_gap
+
+                        total_delta = loss_source + gain_dest
+
+                        if total_delta < best_pos_delta:
+                            best_pos_delta = total_delta
+                            best_k = k
+
+                    if best_pos_delta < -0.001:
+                        # Apply Move
+                        # 1. Remove chain from source
+                        # Προσοχή: αφαιρούμε slice.
+                        del routes[s_idx][i: i + chain_len]
+
+                        # 2. Insert chain to dest
+                        # Προσοχή: τα indices αλλάζουν αν insert γίνεται μετά,
+                        # αλλά εδώ είναι διαφορετικές λίστες οπότε ΟΚ.
+                        # Η insert με slice στην python: list[k:k] = sequence
+                        routes[d_idx][best_k:best_k] = chain
+
+                        solution.cost += best_pos_delta
+
+                        # Clean up empty
+                        if not routes[s_idx]: routes.pop(s_idx)
+                        return True
         return False
