@@ -1,6 +1,6 @@
 import random
 import time
-from initial_solution import CVRPSolution, solve_nearest_neighbor
+from initial_solution import solve_nearest_neighbor
 
 
 class VNSSolver:
@@ -13,19 +13,19 @@ class VNSSolver:
 
     def solve(self):
         self.start_time = time.time()
-
-        # 1. Initial Solution
-        print("--> Generating Initial Solution (Nearest Neighbor)...")
+        print("--> Generating Initial Solution...")
         current_sol = solve_nearest_neighbor(self.instance)
+        # Ensure cost is fresh
         current_sol.cost = current_sol.compute_total_cost()
 
         self.best_solution = current_sol.clone()
         print(f"--> Initial Cost: {current_sol.cost:.2f}")
 
-        k = 1
-        k_max = 3
         iteration = 0
-        no_improv_iter = 0  # Μετρητής στασιμότητας
+        no_improv_iter = 0
+
+        # Base percentage for Ruin
+        pct_remove_base = 0.10
 
         while iteration < self.max_iterations:
             if self._check_time():
@@ -34,138 +34,148 @@ class VNSSolver:
 
             iteration += 1
 
-            # --- PHASE 1: ADAPTIVE SHAKING ---
+            # Clone for the new iteration
             candidate_sol = current_sol.clone()
 
-            # Αν έχουμε κολλήσει για >50 επαναλήψεις, χτυπάμε πιο δυνατά (3-6 κινήσεις)
-            # Αλλιώς, μικρές κινήσεις (1-2) για εξερεύνηση γειτονιάς.
-            if no_improv_iter > 50:
-                moves = random.randint(3, 6)
-            else:
-                moves = random.randint(1, 2)
+            # --- SHAKING: Ruin & Recreate ---
+            # Increase ruin severity if we are stuck (Adaptive)
+            current_pct = 0.30 if no_improv_iter > 50 else pct_remove_base
 
-            self._apply_shaking(candidate_sol, k, moves)
+            # Robustness: Use len(nodes) - 1 (assuming 1 depot) for safe count
+            num_customers = len(self.instance.nodes) - 1
+            num_to_remove = int(max(4, num_customers * current_pct))
 
-            # --- PHASE 2: LOCAL SEARCH (VND) ---
+            self._shaking_ruin_recreate(candidate_sol, num_to_remove)
+
+            # --- LOCAL SEARCH (VND) ---
             self._local_search(candidate_sol)
 
-            # --- PHASE 3: ACCEPTANCE ---
+            # --- SAFETY RECOMPUTE ---
+            # Periodically fix float drift or logic gaps
+            candidate_sol.cost = candidate_sol.compute_total_cost()
+
+            # --- ACCEPTANCE ---
+            # Standard Descent
             if candidate_sol.cost < current_sol.cost - 0.001:
                 current_sol = candidate_sol
-                k = 1
-                no_improv_iter = 0  # Reset counter
+                no_improv_iter = 0
 
                 if current_sol.cost < self.best_solution.cost - 0.001:
                     self.best_solution = current_sol.clone()
                     print(f"Iter {iteration}: New Best Cost = {self.best_solution.cost:.2f}")
             else:
                 no_improv_iter += 1
-                k += 1
-                if k > k_max:
-                    k = 1
 
-        print(f"\n[DONE] Finished after {iteration} iterations.")
         return self.best_solution
 
     def _check_time(self):
         return (time.time() - self.start_time) > self.max_seconds
 
-    def _apply_shaking(self, solution, k, moves=1):
+    # =========================================================================
+    #  RUIN AND RECREATE
+    # =========================================================================
+    def _shaking_ruin_recreate(self, solution, num_to_remove):
         routes = solution.routes
-        if not routes: return
 
-        demands = self.instance.demands
-        capacity = self.instance.capacity
+        # Gather all customers (flatten routes)
+        all_customers = []
+        for r in routes:
+            all_customers.extend(r)
 
-        for _ in range(moves):
-            if len(routes) < 2:
-                # Αν έμεινε 1 route, κάνουμε μόνο intra-changes
-                self._shaking_intra_2opt(routes)
-                continue
+        # Safety Guard: Empty solution or too small
+        if not all_customers:
+            return
 
-            if k == 1:  # Relocate
-                self._shaking_relocate(routes, demands, capacity)
-            elif k == 2:  # Swap
-                self._shaking_swap(routes, demands, capacity)
-            elif k == 3:  # Intra 2-Opt
-                self._shaking_intra_2opt(routes)
+        # Limit removal to available customers
+        actual_remove = min(len(all_customers), num_to_remove)
 
+        # RUIN: Random Removal
+        nodes_to_remove = set(random.sample(all_customers, actual_remove))
+
+        # Filter routes
+        for r in routes:
+            r[:] = [n for n in r if n not in nodes_to_remove]
+
+        # Clean empty routes
         solution.routes = [r for r in routes if r]
+
+        # RECREATE: Best Insertion
+        # Shuffle to avoid deterministic insertion order
+        removed_list = list(nodes_to_remove)
+        random.shuffle(removed_list)
+
+        for node in removed_list:
+            self._best_insertion(solution, node)
+
+        # CRITICAL FIX: Recompute cost after Shaking modifications.
+        # Local search relies on incremental updates, so the base cost must be correct here.
         solution.cost = solution.compute_total_cost()
 
-    # --- Shaking Helpers ---
-    def _shaking_relocate(self, routes, demands, capacity):
-        r1_idx, r2_idx = random.sample(range(len(routes)), 2)
-        r1, r2 = routes[r1_idx], routes[r2_idx]
-        if not r1: return
-        node_idx = random.randint(0, len(r1) - 1)
-        node = r1[node_idx]
-        if sum(demands[n] for n in r2) + demands[node] <= capacity:
-            r1.pop(node_idx)
-            r2.insert(random.randint(0, len(r2)), node)
+    def _best_insertion(self, solution, node):
+        best_delta = float('inf')
+        best_r_idx = -1
+        best_pos_idx = -1
 
-    def _shaking_swap(self, routes, demands, capacity):
-        r1_idx, r2_idx = random.sample(range(len(routes)), 2)
-        r1, r2 = routes[r1_idx], routes[r2_idx]
-        if not r1 or not r2: return
-        idx1, idx2 = random.randint(0, len(r1) - 1), random.randint(0, len(r2) - 1)
-        u, v = r1[idx1], r2[idx2]
-        l1 = sum(demands[n] for n in r1)
-        l2 = sum(demands[n] for n in r2)
-        if (l1 - demands[u] + demands[v] <= capacity and l2 - demands[v] + demands[u] <= capacity):
-            r1[idx1], r2[idx2] = v, u
+        demand = self.instance.demands[node]
+        dist = self.instance.distance
+        depot = self.instance.depot
+        capacity = self.instance.capacity
 
-    def _shaking_intra_2opt(self, routes):
-        r_idx = random.randint(0, len(routes) - 1)
-        route = routes[r_idx]
-        if len(route) < 3: return
-        i, j = sorted(random.sample(range(len(route)), 2))
-        if i + 1 == j: return
-        routes[r_idx] = route[:i + 1] + route[i + 1:j + 1][::-1] + route[j + 1:]
+        # Robustness: Impossible to insert if single node > capacity
+        if demand > capacity:
+            # In a strict solver, this should crash.
+            # For a heuristic, we might skip, but let's raise to warn the user.
+            raise ValueError(f"Node {node} demand ({demand}) exceeds vehicle capacity ({capacity}).")
 
+        # 1. Try existing routes
+        for r_idx, route in enumerate(solution.routes):
+            load = sum(self.instance.demands[n] for n in route)
+            if load + demand > capacity: continue
+
+            for k in range(len(route) + 1):
+                prev_n = route[k - 1] if k > 0 else depot
+                next_n = route[k] if k < len(route) else depot
+
+                delta = dist(prev_n, node) + dist(node, next_n) - dist(prev_n, next_n)
+
+                if delta < best_delta:
+                    best_delta = delta
+                    best_r_idx = r_idx
+                    best_pos_idx = k
+
+        # 2. Try new route
+        delta_new = dist(depot, node) + dist(node, depot)
+        if delta_new < best_delta:
+            best_delta = delta_new
+            best_r_idx = len(solution.routes)
+            best_pos_idx = 0
+
+        # Apply Best Move
+        if best_r_idx == len(solution.routes):
+            solution.routes.append([node])
+        else:
+            solution.routes[best_r_idx].insert(best_pos_idx, node)
+
+        # Note: We do NOT update solution.cost here.
+        # We recompute it globally at the end of _shaking_ruin_recreate.
+
+    # =========================================================================
+    #  LOCAL SEARCH (VND)
+    # =========================================================================
     def _local_search(self, solution):
-        """
-        VND Strategy Enhanced:
-        1. Intra-2Opt (Fast cleanup)
-        2. Inter-2Opt* (Structural change - Big moves)
-        3. Relocate Chain (Precision structural change) <--- NEW
-        4. Relocate (Load balancing single nodes)
-        5. Swap (Exchange)
-        """
         improved = True
         while improved:
             improved = False
+            # Strategy: Cheapest/Fastest moves first
+            if self._2opt_intra_fast(solution): improved = True; continue
+            if self._2opt_star_fast(solution): improved = True; continue
+            if self._relocate_chain(solution, 2): improved = True; continue
+            if self._relocate_chain(solution, 1): improved = True; continue
+            if self._swap_fast(solution): improved = True; continue
 
-            # 1. Clean individual routes first (Intra)
-            while self._2opt_intra_fast(solution): improved = True
-
-            # 2. Inter-Route 2-Opt* (The Heavy Lifter)
-            if self._2opt_star_fast(solution):
-                improved = True
-                continue
-
-                # 3. NEW: Relocate Chains (Move sequences of 2 nodes)
-            # Βοηθάει να μεταφερθούν "συστάδες" πελατών
-            if self._relocate_chain_fast(solution, chain_len=2):
-                improved = True
-                continue
-
-            # 4. Standard Relocate (Single node)
-            if self._relocate_fast(solution):
-                improved = True
-                continue
-
-            # 5. Swap nodes
-            if self._swap_fast(solution):
-                improved = True
-                continue
-
-    # ------------------------------------------------------------------
-    # OPERATORS (With Inter-Route 2-Opt*)
-    # ------------------------------------------------------------------
+    # --- OPERATORS (Delta O(1)) ---
 
     def _2opt_intra_fast(self, solution):
-        """Intra-route 2-opt O(1). Includes Depot edges."""
         dist = self.instance.distance
         depot = self.instance.depot
 
@@ -173,120 +183,74 @@ class VNSSolver:
             n = len(route)
             if n < 2: continue
 
-            for i in range(-1, n - 1):
-                for j in range(i + 2, n):
-                    # Edge 1: (A, B)
-                    A = depot if i == -1 else route[i]
-                    B = route[0] if i == -1 else route[i + 1]
+            for i in range(-1, n - 2):
+                u = depot if i == -1 else route[i]
+                v = route[i + 1]
+                for j in range(i + 1, n):
+                    if j == n - 1 and i == -1: continue
 
-                    # Edge 2: (C, D)
-                    C = route[j]
-                    D = depot if j == n - 1 else route[j + 1]
+                    x = route[j]
+                    y = depot if j == n - 1 else route[j + 1]
 
-                    curr = dist(A, B) + dist(C, D)
-                    new_c = dist(A, C) + dist(B, D)
+                    delta = (dist(u, x) + dist(v, y)) - (dist(u, v) + dist(x, y))
 
-                    if new_c < curr - 0.001:
-                        # Reverse segment [i+1 ... j]
-                        start, end = i + 1, j
-                        solution.routes[r_idx][start:end + 1] = solution.routes[r_idx][start:end + 1][::-1]
-                        solution.cost += (new_c - curr)
+                    if delta < -0.001:
+                        solution.routes[r_idx][i + 1:j + 1] = reversed(solution.routes[r_idx][i + 1:j + 1])
+                        solution.cost += delta
                         return True
         return False
 
     def _2opt_star_fast(self, solution):
-        """
-        Inter-Route 2-Opt (2-Opt*).
-        Ανταλλάσσει τις ουρές δύο διαδρομών.
-        R1: A -> B -> [Tail1]
-        R2: C -> D -> [Tail2]
-        New R1: A -> B -> [Tail2]
-        New R2: C -> D -> [Tail1]
-        """
         routes = solution.routes
         dist = self.instance.distance
         depot = self.instance.depot
         demands = self.instance.demands
         capacity = self.instance.capacity
 
-        # Precompute loads
+        # Precompute loads helps slightly with speed
         loads = [sum(demands[n] for n in r) for r in routes]
 
         for r1_idx in range(len(routes)):
             for r2_idx in range(r1_idx + 1, len(routes)):
-                r1 = routes[r1_idx]
-                r2 = routes[r2_idx]
+                r1, r2 = routes[r1_idx], routes[r2_idx]
 
-                # Προσπάθεια κοψίματος μετά από κάθε κόμβο (συμπεριλαμβανομένου του depot)
-                # i: index του τελευταίου κόμβου που μένει στο R1 (αν -1, μένει μόνο το depot)
+                # Split R1 after i
                 for i in range(-1, len(r1)):
-                    # Load του κομματιού που μένει στο R1
-                    load_r1_head = 0
-                    if i >= 0:
-                        # Αυτό είναι λίγο αργό (O(N)), αλλά οι διαδρομές είναι μικρές
-                        load_r1_head = sum(demands[r1[x]] for x in range(i + 1))
-
+                    load_r1_head = sum(demands[r1[x]] for x in range(i + 1)) if i >= 0 else 0
                     load_r1_tail = loads[r1_idx] - load_r1_head
 
-                    # Nodes γύρω από το κόψιμο στο R1
-                    u = depot if i == -1 else r1[i]
-                    u_next = depot if i == len(r1) - 1 else r1[i + 1]
+                    u = r1[i] if i >= 0 else depot
+                    u_next = r1[i + 1] if i < len(r1) - 1 else depot
 
-                    # j: index του τελευταίου κόμβου που μένει στο R2
+                    # Split R2 after j
                     for j in range(-1, len(r2)):
-                        # Optimization: Αν και οι δύο αλλαγές περιλαμβάνουν depot (i=-1, j=-1),
-                        # ουσιαστικά ανταλλάσσουμε ολόκληρες διαδρομές -> άχρηστο.
                         if i == -1 and j == -1: continue
 
-                        load_r2_head = 0
-                        if j >= 0:
-                            load_r2_head = sum(demands[r2[x]] for x in range(j + 1))
-
+                        load_r2_head = sum(demands[r2[x]] for x in range(j + 1)) if j >= 0 else 0
                         load_r2_tail = loads[r2_idx] - load_r2_head
 
-                        # Check Capacity για τις νέες διαδρομές
-                        # New R1 = Head1 + Tail2
                         if load_r1_head + load_r2_tail > capacity: continue
-                        # New R2 = Head2 + Tail1
                         if load_r2_head + load_r1_tail > capacity: continue
 
-                        # Nodes γύρω από το κόψιμο στο R2
-                        v = depot if j == -1 else r2[j]
-                        v_next = depot if j == len(r2) - 1 else r2[j + 1]
+                        v = r2[j] if j >= 0 else depot
+                        v_next = r2[j + 1] if j < len(r2) - 1 else depot
 
-                        # Υπολογισμός Delta
-                        # Old edges: (u, u_next) + (v, v_next)
-                        current_cost = dist(u, u_next) + dist(v, v_next)
-
-                        # New edges: (u, v_next) + (v, u_next)
-                        # R1 connect u to old tail of R2 (starts at v_next)
-                        # R2 connect v to old tail of R1 (starts at u_next)
+                        old_cost = dist(u, u_next) + dist(v, v_next)
                         new_cost = dist(u, v_next) + dist(v, u_next)
+                        delta = new_cost - old_cost
 
-                        if new_cost < current_cost - 0.001:
-                            # Apply Move
-                            # Tails
-                            tail1 = r1[i + 1:]
-                            tail2 = r2[j + 1:]
-
-                            # Heads
-                            head1 = r1[:i + 1]
-                            head2 = r2[:j + 1]
-
-                            new_r1 = head1 + tail2
-                            new_r2 = head2 + tail1
-
+                        if delta < -0.001:
+                            new_r1 = r1[:i + 1] + r2[j + 1:]
+                            new_r2 = r2[:j + 1] + r1[i + 1:]
                             routes[r1_idx] = new_r1
                             routes[r2_idx] = new_r2
-
-                            solution.cost += (new_cost - current_cost)
-                            # Αν αδειάσουν διαδρομές, clean up
+                            solution.cost += delta
+                            # If a route became empty, cleanup
                             solution.routes = [r for r in routes if r]
                             return True
         return False
 
-    def _relocate_fast(self, solution):
-        """Standard Relocate with Delta."""
+    def _relocate_chain(self, solution, chain_len):
         routes = solution.routes
         dist = self.instance.distance
         depot = self.instance.depot
@@ -294,39 +258,46 @@ class VNSSolver:
         capacity = self.instance.capacity
         loads = [sum(demands[n] for n in r) for r in routes]
 
-        for s_idx, src_route in enumerate(routes):
-            if not src_route: continue
-            for n_idx, node in enumerate(src_route):
-                demand = demands[node]
-                prev_n = src_route[n_idx - 1] if n_idx > 0 else depot
-                next_n = src_route[n_idx + 1] if n_idx < len(src_route) - 1 else depot
-                cost_rem = dist(prev_n, node) + dist(node, next_n) - dist(prev_n, next_n)
+        for s_idx, src in enumerate(routes):
+            if len(src) < chain_len: continue
 
-                for d_idx, dst_route in enumerate(routes):
+            for i in range(len(src) - chain_len + 1):
+                chain = src[i:i + chain_len]
+                chain_load = sum(demands[n] for n in chain)
+
+                prev_s = src[i - 1] if i > 0 else depot
+                next_s = src[i + chain_len] if i + chain_len < len(src) else depot
+
+                loss = dist(prev_s, next_s) - (dist(prev_s, chain[0]) + dist(chain[-1], next_s))
+
+                for d_idx, dst in enumerate(routes):
                     if s_idx == d_idx: continue
-                    if loads[d_idx] + demand > capacity: continue
+                    if loads[d_idx] + chain_load > capacity: continue
 
-                    best_pos_delta = float('inf')
+                    best_delta_insert = float('inf')
                     best_k = -1
 
-                    for k in range(len(dst_route) + 1):
-                        p = dst_route[k - 1] if k > 0 else depot
-                        n = dst_route[k] if k < len(dst_route) else depot
-                        delta = (dist(p, node) + dist(node, n) - dist(p, n)) - cost_rem
-                        if delta < best_pos_delta:
-                            best_pos_delta = delta
+                    for k in range(len(dst) + 1):
+                        prev_d = dst[k - 1] if k > 0 else depot
+                        next_d = dst[k] if k < len(dst) else depot
+
+                        gain = (dist(prev_d, chain[0]) + dist(chain[-1], next_d)) - dist(prev_d, next_d)
+
+                        if gain < best_delta_insert:
+                            best_delta_insert = gain
                             best_k = k
 
-                    if best_pos_delta < -0.001:
-                        val = routes[s_idx].pop(n_idx)
-                        routes[d_idx].insert(best_k, val)
-                        solution.cost += best_pos_delta
-                        if not routes[s_idx]: routes.pop(s_idx)
+                    total_delta = loss + best_delta_insert
+
+                    if total_delta < -0.001:
+                        del src[i:i + chain_len]
+                        dst[best_k:best_k] = chain
+                        solution.cost += total_delta
+                        if not src: routes.pop(s_idx)
                         return True
         return False
 
     def _swap_fast(self, solution):
-        """Standard Swap with Delta."""
         routes = solution.routes
         dist = self.instance.distance
         depot = self.instance.depot
@@ -343,104 +314,19 @@ class VNSSolver:
                     du = demands[u]
                     up = r1[i - 1] if i > 0 else depot
                     un = r1[i + 1] if i < len(r1) - 1 else depot
-                    loss_u = dist(up, u) + dist(u, un)
 
                     for j, v in enumerate(r2):
                         dv = demands[v]
-                        if (l1 - du + dv > capacity or l2 - dv + du > capacity): continue
+                        if l1 - du + dv > capacity or l2 - dv + du > capacity: continue
 
                         vp = r2[j - 1] if j > 0 else depot
                         vn = r2[j + 1] if j < len(r2) - 1 else depot
-                        loss_v = dist(vp, v) + dist(v, vn)
 
-                        gain_v = dist(up, v) + dist(v, un)
-                        gain_u = dist(vp, u) + dist(u, vn)
+                        old_cost = dist(up, u) + dist(u, un) + dist(vp, v) + dist(v, vn)
+                        new_cost = dist(up, v) + dist(v, un) + dist(vp, u) + dist(u, vn)
 
-                        delta = (gain_v + gain_u) - (loss_u + loss_v)
-                        if delta < -0.001:
+                        if new_cost - old_cost < -0.001:
                             r1[i], r2[j] = v, u
-                            solution.cost += delta
+                            solution.cost += (new_cost - old_cost)
                             return True
-        return False
-
-    def _relocate_chain_fast(self, solution, chain_len=2):
-        """
-        Inter-route Relocate Chain.
-        Μετακινεί μια αλληλουχία 'chain_len' κόμβων από το Source στο Destination.
-        """
-        routes = solution.routes
-        dist = self.instance.distance
-        depot = self.instance.depot
-        demands = self.instance.demands
-        capacity = self.instance.capacity
-        loads = [sum(demands[n] for n in r) for r in routes]
-
-        for s_idx, src_route in enumerate(routes):
-            if len(src_route) < chain_len: continue
-
-            # Τρέχουμε το παράθυρο της αλυσίδας
-            # i είναι η αρχή της αλυσίδας
-            for i in range(len(src_route) - chain_len + 1):
-                # Η αλυσίδα είναι: src_route[i ... i + chain_len - 1]
-                chain = src_route[i: i + chain_len]
-                chain_demand = sum(demands[n] for n in chain)
-
-                # Κόμβοι γύρω από την αλυσίδα στο Source
-                # prev -> [Start ... End] -> next
-                start_node = chain[0]
-                end_node = chain[-1]
-
-                prev_n = src_route[i - 1] if i > 0 else depot
-                next_n = src_route[i + chain_len] if i + chain_len < len(src_route) else depot
-
-                # Κόστος που φεύγει (αφαιρούμε τις ακμές σύνδεσης της αλυσίδας)
-                # (Το εσωτερικό κόστος της αλυσίδας μένει ίδιο, άρα δεν το βάζουμε στο delta)
-                cost_removed = dist(prev_n, start_node) + dist(end_node, next_n)
-                # Κόστος που "κλείνει" το κενό
-                cost_close_gap = dist(prev_n, next_n)
-
-                loss_source = cost_close_gap - cost_removed
-
-                for d_idx, dst_route in enumerate(routes):
-                    if s_idx == d_idx: continue
-                    if loads[d_idx] + chain_demand > capacity: continue
-
-                    # Ψάχνουμε θέση εισαγωγής στο Destination
-                    best_pos_delta = float('inf')
-                    best_k = -1
-
-                    for k in range(len(dst_route) + 1):
-                        p = dst_route[k - 1] if k > 0 else depot
-                        n = dst_route[k] if k < len(dst_route) else depot
-
-                        # Κόστος ένταξης της αλυσίδας ανάμεσα σε p και n
-                        # p -> [Start ... End] -> n
-                        cost_added = dist(p, start_node) + dist(end_node, n)
-                        cost_break_gap = dist(p, n)
-
-                        gain_dest = cost_added - cost_break_gap
-
-                        total_delta = loss_source + gain_dest
-
-                        if total_delta < best_pos_delta:
-                            best_pos_delta = total_delta
-                            best_k = k
-
-                    if best_pos_delta < -0.001:
-                        # Apply Move
-                        # 1. Remove chain from source
-                        # Προσοχή: αφαιρούμε slice.
-                        del routes[s_idx][i: i + chain_len]
-
-                        # 2. Insert chain to dest
-                        # Προσοχή: τα indices αλλάζουν αν insert γίνεται μετά,
-                        # αλλά εδώ είναι διαφορετικές λίστες οπότε ΟΚ.
-                        # Η insert με slice στην python: list[k:k] = sequence
-                        routes[d_idx][best_k:best_k] = chain
-
-                        solution.cost += best_pos_delta
-
-                        # Clean up empty
-                        if not routes[s_idx]: routes.pop(s_idx)
-                        return True
         return False
