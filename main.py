@@ -11,9 +11,9 @@ except ImportError as e:
     print(f"Critical Error: Missing modules. {e}")
     sys.exit(1)
 
-# Optional Plotter Import
+# Optional Plotter Import (Assuming the file is named plotter.py)
 try:
-    from visualization   import plot_solution
+    from plotter import plot_solution
 
     HAS_PLOTTER = True
 except ImportError:
@@ -47,7 +47,6 @@ def main():
 
     target_file = args.instance
     if not target_file:
-        # Fallback logic
         if os.path.exists("Instances"):
             files = [f for f in os.listdir("Instances") if f.endswith(".vrp")]
             if files: target_file = os.path.join("Instances", files[0])
@@ -76,22 +75,31 @@ def main():
             print(f"Gap:        {gap:.2f}%")
         print("=" * 30)
 
-        # 6. Plotting
+
         if args.plot:
             if HAS_PLOTTER:
-                print("Generating plot...")
-                # Call the new plotter function
-                # We pass 'bks' so it can calculate the Gap in the title
+                # 1. Define the directory
+                output_dir = "visualizations"
+
+                # 2. Create it if it doesn't exist
+                os.makedirs(output_dir, exist_ok=True)
+
+                # 3. Define the full save path (e.g., visualizations/X-n101-k25.png)
+                save_filename = f"{inst.name}.png"
+                full_save_path = os.path.join(output_dir, save_filename)
+
+                print(f"Generating plot -> {full_save_path}")
+
+                # 4. Call plotter with the path
                 plot_solution(
                     solution,
                     bks=bks,
                     name=inst.name,
+                    save_path=full_save_path,
                     show=True
-                    # save_path=f"{inst.name}_solution.png"  # Uncomment to save automatically
                 )
             else:
-                print("Warning: Plotter module not found. Make sure plotter.py is in the folder.")
-                print("Also ensure matplotlib is installed: pip install matplotlib")
+                print("Warning: Plotter module not found.")
 
     except Exception as e:
         print(f"\nExecution Error: {e}")
