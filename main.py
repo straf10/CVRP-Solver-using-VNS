@@ -11,9 +11,8 @@ except ImportError as e:
     print(f"Critical Error: Missing modules. {e}")
     sys.exit(1)
 
-# Optional Plotter Import (Assuming the file is named plotter.py)
 try:
-    from plotter import plot_solution
+    from visualization import plot_solution
 
     HAS_PLOTTER = True
 except ImportError:
@@ -99,7 +98,7 @@ def main():
                     show=True
                 )
             else:
-                print("Warning: Plotter module not found.")
+                print("Warning: Visualization module not found.")
 
     except Exception as e:
         print(f"\nExecution Error: {e}")
