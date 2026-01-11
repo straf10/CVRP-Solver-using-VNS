@@ -13,7 +13,7 @@ except ImportError as e:
 
 # Optional Plotter Import
 try:
-    from plotter import plot_solution
+    from visualization   import plot_solution
 
     HAS_PLOTTER = True
 except ImportError:
@@ -76,8 +76,22 @@ def main():
             print(f"Gap:        {gap:.2f}%")
         print("=" * 30)
 
-        if args.plot and HAS_PLOTTER:
-            plot_solution(solution, title=f"Final Cost: {solution.cost:.2f}")
+        # 6. Plotting
+        if args.plot:
+            if HAS_PLOTTER:
+                print("Generating plot...")
+                # Call the new plotter function
+                # We pass 'bks' so it can calculate the Gap in the title
+                plot_solution(
+                    solution,
+                    bks=bks,
+                    name=inst.name,
+                    show=True
+                    # save_path=f"{inst.name}_solution.png"  # Uncomment to save automatically
+                )
+            else:
+                print("Warning: Plotter module not found. Make sure plotter.py is in the folder.")
+                print("Also ensure matplotlib is installed: pip install matplotlib")
 
     except Exception as e:
         print(f"\nExecution Error: {e}")
