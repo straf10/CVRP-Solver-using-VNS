@@ -1,7 +1,6 @@
 # CVRP Solver using Variable Neighborhood Search (VNS)
 
 ![Python](https://img.shields.io/badge/Python-3.13%2B-blue)
-![License](https://img.shields.io/badge/License-MIT-green)
 ![Status](https://img.shields.io/badge/Status-Completed-success)
 
 Ένα υψηλής απόδοσης σύστημα επίλυσης του προβλήματος **Capacitated Vehicle Routing Problem (CVRP)**, υλοποιημένο σε Python. Το έργο χρησιμοποιεί τον μετα-ευρετικό αλγόριθμο **Variable Neighborhood Search (VNS)** ενισχυμένο με στρατηγικές **Ruin & Recreate** και **Delta Evaluation** για την επίτευξη αποτελεσμάτων με απόκλιση **< 0.5%** από τις βέλτιστες γνωστές λύσεις.
@@ -40,19 +39,19 @@
 
 ### 1. Instance: X-n110-k13 (Optimal Solution)
 > **Cost:** 14,971 | **Gap:** 0.00%
-![X-n110 Solution](plots/X-n110-k13.png)
+![X-n110 Solution](visualizations/X-n110-k13.png)
 
 ### 2. Instance: X-n139-k10
 > **Cost:** 13,645 | **Gap:** 0.40%
-![X-n139 Solution](plots/X-n139-k10.png)
+![X-n139 Solution](visualizations/X-n139-k10.png)
 
 ### 3. Instance: X-n101-k25
 > **Cost:** 27,723 | **Gap:** 0.48%
-![X-n101 Solution](plots/X-n101-k25.png)
+![X-n101 Solution](visualizations/X-n101-k25.png)
 
 ### 4. Instance: X-n106-k14
 > **Cost:** 26,568 | **Gap:** 0.78%
-![X-n106 Solution](plots/X-n106-k14.png)
+![X-n106 Solution](visualizations/X-n106-k14.png)
 
 ---
 
@@ -107,6 +106,8 @@ CVRP-Solver/
 ├── initial_solution.py   # Κατασκευαστικός αλγόριθμος (Nearest Neighbor)
 ├── visualization.py            # Σύστημα Visualization
 ├── requirements.txt      # Dependencies (matplotlib)
+├── visualizations/       # Φάκελος διαγραμμάτων
 └── Instances/            # Φάκελος δεδομένων
     ├── cvrp_tests/       # Τα 4 benchmarks που αναλύθηκαν
     └── cvrp/             # 100 επιπλέον instances
+
