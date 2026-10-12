@@ -1,8 +1,11 @@
 import math
-import os
+
+SECTIONS = {"NODE_COORD_SECTION": "coord", "DEMAND_SECTION": "demand", "DEPOT_SECTION": "depot"}
 
 
 class CVRPInstance:
+    """A TSPLIB-format CVRP instance with a precomputed distance matrix."""
+
     def __init__(self, filepath):
         self.filepath = filepath
         self.name = ""
@@ -10,113 +13,78 @@ class CVRPInstance:
         self.capacity = 0
         self.edge_weight_type = "EUC_2D"
         self.depot = None
-
-        # Raw Data
         self.coords = {}
-        self.demands = {}
+        self.demand = {}
 
-        # Internal Mapping
-        self.nodes = []
-        self.id_to_idx = {}
-        self.dist_matrix = []
+        self._parse()
+        self._validate()
 
-        self._read_file(filepath)
-        self._validate_data()
-        self._compute_distances()
+        self.nodes = sorted(self.coords)
+        self.customers = [n for n in self.nodes if n != self.depot]
+        self.dist = self._build_distances()
 
-    def _read_file(self, filepath):
-        if not os.path.exists(filepath):
-            raise FileNotFoundError(f"File not found: {filepath}")
-
+    def _parse(self):
         section = None
-        with open(filepath, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if not line: continue
-
-                if line.startswith("NAME"):
-                    self.name = line.split(":")[-1].strip()
-                elif line.startswith("DIMENSION"):
-                    self.dimension = int(line.split(":")[-1].strip())
-                elif line.startswith("CAPACITY"):
-                    self.capacity = int(line.split(":")[-1].strip())
-                elif line.startswith("EDGE_WEIGHT_TYPE"):
-                    self.edge_weight_type = line.split(":")[-1].strip().upper()
-
-                # Section detection
-                elif line.startswith("NODE_COORD_SECTION"):
-                    section = "COORD"
+        with open(self.filepath, "r") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line:
                     continue
-                elif line.startswith("DEMAND_SECTION"):
-                    section = "DEMAND"
-                    continue
-                elif line.startswith("DEPOT_SECTION"):
-                    section = "DEPOT"
-                    continue
-                elif line.startswith("EOF"):
+                if line == "EOF":
                     break
+                if line in SECTIONS:
+                    section = SECTIONS[line]
+                    continue
 
-                # Parsing
-                if section == "COORD":
-                    parts = line.split()
-                    self.coords[int(parts[0])] = (float(parts[1]), float(parts[2]))
-                elif section == "DEMAND":
-                    parts = line.split()
-                    self.demands[int(parts[0])] = int(parts[1])
-                elif section == "DEPOT":
-                    val = int(line)
-                    if val == -1:
+                key, sep, value = line.partition(":")
+                if sep:
+                    key, value = key.strip(), value.strip()
+                    if key == "NAME":
+                        self.name = value
+                    elif key == "DIMENSION":
+                        self.dimension = int(value)
+                    elif key == "CAPACITY":
+                        self.capacity = int(value)
+                    elif key == "EDGE_WEIGHT_TYPE":
+                        self.edge_weight_type = value.upper()
+                elif section == "coord":
+                    node, x, y = line.split()[:3]
+                    self.coords[int(node)] = (float(x), float(y))
+                elif section == "demand":
+                    node, demand = line.split()[:2]
+                    self.demand[int(node)] = int(demand)
+                elif section == "depot":
+                    node = int(line)
+                    if node == -1:
                         section = None
                     elif self.depot is None:
-                        self.depot = val
+                        self.depot = node
 
-    def _validate_data(self):
-        # 1. Dimension Check
+    def _validate(self):
         if len(self.coords) != self.dimension:
             raise ValueError(
-                f"Dimension mismatch: Header says {self.dimension}, "
-                f"but found {len(self.coords)} coordinates."
+                f"Dimension mismatch: header says {self.dimension}, "
+                f"found {len(self.coords)} coordinates."
             )
-
-        # 2. Demand Check (Robustness Fix)
-        # Ensure every node with coordinates has a demand entry
-        missing_demands = set(self.coords.keys()) - set(self.demands.keys())
-        if missing_demands:
-            raise ValueError(f"Missing demands for nodes: {list(missing_demands)[:5]}...")
-
-        # 3. Depot Check (Robustness Fix)
         if self.depot is None:
             raise ValueError("No depot defined in DEPOT_SECTION.")
         if self.depot not in self.coords:
             raise ValueError(f"Depot ID {self.depot} has no coordinates.")
 
-    def _compute_distances(self):
-        self.nodes = sorted(self.coords.keys())
-        self.num_nodes = len(self.nodes)
-        self.id_to_idx = {uid: i for i, uid in enumerate(self.nodes)}
+        missing = sorted(set(self.coords) - set(self.demand))
+        if missing:
+            raise ValueError(f"Missing demands for nodes: {missing[:5]}...")
 
-        # Initialize matrix
-        self.dist_matrix = [[0.0] * self.num_nodes for _ in range(self.num_nodes)]
-        is_euc_2d = (self.edge_weight_type == "EUC_2D")
+        oversized = [n for n in self.coords if n != self.depot and self.demand[n] > self.capacity]
+        if oversized:
+            raise ValueError(f"Customer {oversized[0]} demand exceeds vehicle capacity {self.capacity}.")
 
-        for i in range(self.num_nodes):
-            u = self.nodes[i]
-            x1, y1 = self.coords[u]
-            for j in range(i + 1, self.num_nodes):
-                v = self.nodes[j]
-                x2, y2 = self.coords[v]
+    def _build_distances(self):
+        round_nint = self.edge_weight_type == "EUC_2D"
 
-                dist_val = math.hypot(x1 - x2, y1 - y2)
-                if is_euc_2d:
-                    final_dist = int(dist_val + 0.5)
-                else:
-                    final_dist = dist_val
+        def metric(u, v):
+            (x1, y1), (x2, y2) = self.coords[u], self.coords[v]
+            d = math.hypot(x1 - x2, y1 - y2)
+            return int(d + 0.5) if round_nint else d
 
-                self.dist_matrix[i][j] = final_dist
-                self.dist_matrix[j][i] = final_dist
-
-    def distance(self, u, v):
-        try:
-            return self.dist_matrix[self.id_to_idx[u]][self.id_to_idx[v]]
-        except KeyError:
-            raise KeyError(f"Node ID {u} or {v} not found in instance data.")
+        return {u: {v: metric(u, v) for v in self.nodes} for u in self.nodes}
