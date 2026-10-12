@@ -87,27 +87,27 @@ To **Capacitated Vehicle Routing Problem** είναι ένα κλασικό πρ
 
 ##  Οδηγίες Εκτέλεσης 
 
-Ο solver εκτελείται μέσω της γραμμής εντολών  χρησιμοποιώντας το `main.py`. Παρακάτω παρουσιάζονται τα βασικά σενάρια χρήσης.
+Ο solver εκτελείται μέσω της γραμμής εντολών  χρησιμοποιώντας το `src/main.py`. Παρακάτω παρουσιάζονται τα βασικά σενάρια χρήσης.
 
 ### 1. Βασική Εκτέλεση
 Για να λύσετε ένα συγκεκριμένο instance χωρίς γραφικά:
 
 ```bash
-python main.py --instance Instances/cvrp_tests/X-n101-k25.vrp
+python src/main.py --instance Instances/cvrp/X-n101-k25.vrp
 ```
 
 ### 2. Εκτέλεση με Visualization & Seed
 Για να παραχθεί το γράφημα της λύσης (θα αποθηκευτεί στο φάκελο visualizations/) και να ορίσετε συγκεκριμένο seed για να πάρετε ακριβώς τα ίδια αποτελέσματα με το benchmark:
 
 ```bash
-python main.py --instance Instances/cvrp_tests/X-n101-k25.vrp --plot --seed 42
+python src/main.py --instance Instances/cvrp/X-n101-k25.vrp --plot --seed 42
 ```
 
 ### 3. Πλήρης Παραμετροποίηση
 Μπορείτε να ορίσετε το χρονικό όριο και τον αριθμό επαναλήψεων:
 
 ```bash
-python main.py --instance Instances/cvrp_tests/X-n139-k10.vrp --plot --seed 42 --time 60 --iter 5000
+python src/main.py --instance Instances/cvrp/X-n139-k10.vrp --plot --seed 42 --time 60 --iter 5000
 ```
 
 ### Επεξήγηση Παραμέτρων 
@@ -126,16 +126,14 @@ python main.py --instance Instances/cvrp_tests/X-n139-k10.vrp --plot --seed 42 -
 
 ```text
 CVRP-Solver/
-├── main.py               # Κεντρικό script εκτέλεσης (CLI)
-├── vns_solver.py         # Κώδικας αλγορίθμου (VNS logic, Operators, Delta Eval)
-├── CVRP_Instance.py      # Parser & Data Validator για .vrp αρχεία
-├── initial_solution.py   # Κατασκευαστικός αλγόριθμος (Nearest Neighbor)
-├── visualization.py            # Σύστημα Visualization
-├── requirements.txt      # Dependencies (matplotlib)
-├── visualizations/       # Φάκελος διαγραμμάτων
-└── Instances/            # Φάκελος δεδομένων
-    ├── cvrp_tests/       # Τα 4 benchmarks που αναλύθηκαν
-    └── cvrp/             # 100 επιπλέον instances
-
-
-
+├── src/                      # Κώδικας του solver
+│   ├── main.py               # Κεντρικό script εκτέλεσης (CLI)
+│   ├── vns_solver.py         # Κώδικας αλγορίθμου (VNS logic, Operators, Delta Eval)
+│   ├── CVRP_Instance.py      # Parser & Data Validator για .vrp αρχεία
+│   ├── initial_solution.py   # Κατασκευαστικός αλγόριθμος (Nearest Neighbor)
+│   └── visualization.py      # Σύστημα Visualization
+├── requirements.txt          # Dependencies (matplotlib)
+├── visualizations/           # Φάκελος διαγραμμάτων
+└── Instances/                # Φάκελος δεδομένων
+    └── cvrp/                 # Τα instances (συμπεριλαμβανομένων των 4 benchmarks που αναλύθηκαν)
+```

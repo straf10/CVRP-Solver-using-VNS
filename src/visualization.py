@@ -1,6 +1,4 @@
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-import numpy as np
 
 
 def plot_solution(solution, bks=None, name="Instance", save_path=None, show=True):

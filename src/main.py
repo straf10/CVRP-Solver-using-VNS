@@ -2,7 +2,6 @@ import argparse
 import os
 import sys
 import random
-import time
 
 try:
     from CVRP_Instance import CVRPInstance
@@ -28,7 +27,7 @@ def read_bks(filepath):
             for line in f:
                 if "Cost" in line:
                     return float(line.strip().split()[-1])
-    except:
+    except Exception:
         return None
 
 
